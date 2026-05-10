@@ -1,0 +1,134 @@
+name: Build Ignition Edge Container
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'Containerfile'
+      - '.github/workflows/build.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'Containerfile'
+      - '.github/workflows/build.yml'
+  workflow_dispatch:
+    inputs:
+      ignition_version:
+        description: 'Ignition Edge version (zip release tag without leading v)'
+        required: true
+        default: '8.3.6'
+
+# 1.85 GB ZIP + ~3 GB extracted + 14 GB GH-hosted runner disk = tight.
+# Keep concurrency at 1 so two pushes can't stomp each other on disk.
+concurrency:
+  group: ignition-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    timeout-minutes: 60
+
+    env:
+      REGISTRY: ghcr.io
+      IMAGE_NAME: embernet-ai/ignition-edge
+      # Override at workflow_dispatch time; otherwise tracks the default below.
+      IGNITION_VERSION: ${{ github.event.inputs.ignition_version || '8.3.6' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Free up runner disk before we start — the Ignition zip is 1.85 GB
+      # and the extracted tree pushes intermediate layers near the limit.
+      - name: Reclaim runner disk
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /opt/hostedtoolcache/CodeQL || true
+          df -h /
+
+      - name: Set up QEMU (arm64 emulation)
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: linux/arm64
+
+      - name: Install Podman
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman jq
+
+      - name: Resolve image tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "image=localhost/embernet-ai/ignition-edge:test" >> "$GITHUB_OUTPUT"
+            echo "push=false"                                     >> "$GITHUB_OUTPUT"
+          else
+            BRANCH="${{ github.ref_name }}"
+            echo "image=${REGISTRY}/${IMAGE_NAME}:${BRANCH}"      >> "$GITHUB_OUTPUT"
+            echo "push=true"                                      >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Login to ghcr.io
+        if: steps.tag.outputs.push == 'true'
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" \
+            | podman login "${REGISTRY}" -u "${{ github.actor }}" --password-stdin
+
+      - name: Build arm64 image (this takes ~15-25 min under QEMU)
+        run: |
+          podman build \
+            --platform linux/arm64 \
+            --build-arg IGNITION_VERSION="${IGNITION_VERSION}" \
+            -t "${{ steps.tag.outputs.image }}" \
+            -f Containerfile .
+
+      - name: Inspect image size
+        run: |
+          podman images "${{ steps.tag.outputs.image }}" --format 'table {{.Repository}}\t{{.Tag}}\t{{.Size}}'
+
+      - name: Smoke test (arm64 — verify install layout + ignition.sh)
+        run: |
+          podman run --rm \
+            --entrypoint /bin/sh \
+            "${{ steps.tag.outputs.image }}" \
+            -c 'set -e; \
+                test -x /usr/local/bin/ignition/ignition.sh; \
+                test -x /usr/local/bin/ignition/ignition-gateway; \
+                test -f /usr/local/bin/ignition/data/gateway.xml_clean; \
+                test -d /usr/local/bin/ignition/user-lib/modules; \
+                ls /usr/local/bin/ignition/user-lib/modules | head -10; \
+                echo "ignition layout OK"'
+
+      - name: Push image
+        if: steps.tag.outputs.push == 'true'
+        run: |
+          podman push "${{ steps.tag.outputs.image }}" \
+            "docker://${{ steps.tag.outputs.image }}"
+
+      # On main pushes, also publish :latest and the version tag so
+      # appliances pull a stable rolling reference and a pinned one.
+      - name: Tag and push :latest + version (main only)
+        if: steps.tag.outputs.push == 'true' && github.ref_name == 'main'
+        run: |
+          for ALIAS in latest "${IGNITION_VERSION}"; do
+            podman tag "${{ steps.tag.outputs.image }}" \
+              "${REGISTRY}/${IMAGE_NAME}:${ALIAS}"
+            podman push "${REGISTRY}/${IMAGE_NAME}:${ALIAS}" \
+              "docker://${REGISTRY}/${IMAGE_NAME}:${ALIAS}"
+          done
+
+      - name: Summary
+        run: |
+          if [ "${{ steps.tag.outputs.push }}" = "true" ]; then
+            echo "Pushed: ${{ steps.tag.outputs.image }}"
+            if [ "${{ github.ref_name }}" = "main" ]; then
+              echo "Pushed: ${REGISTRY}/${IMAGE_NAME}:latest"
+              echo "Pushed: ${REGISTRY}/${IMAGE_NAME}:${IGNITION_VERSION}"
+            fi
+          else
+            echo "Built and smoke-tested locally; no push (PR build)"
+          fi
