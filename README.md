@@ -1,29 +1,47 @@
 # Embernet Ignition Packages
 
-Inductive Automation Ignition Edge runtime, packaged for ARM64 deployment
-via Podman Quadlet on EmberNet edge appliances.
+Inductive Automation Ignition runtimes — Edge (ARM64 + x86-64) and
+Cloud/Standard (x86-64) — packaged for Podman Quadlet deployment on
+EmberNet edge appliances and UT3 control-plane nodes.
 
 ## Releases
 
-This repository hosts the upstream Ignition Edge ZIP installs as GitHub
-Releases. Each release tag `vX.Y.Z` carries one or more zip assets
-covering different platforms.
+This repository hosts the upstream Ignition install artifacts as GitHub
+Releases. Each release tag `vX.Y.Z` carries one or more assets.
 
-| Tag      | Platform        | Asset name |
-|----------|-----------------|------------|
-| `v8.3.6` | Linux ARM64     | `Ignition-Edge-linux-aarch-64-8.3.6.zip` (~1.85 GB) |
+| Tag      | Platform        | Asset name | Edition |
+|----------|-----------------|------------|---------|
+| `v8.3.6` | Linux ARM64     | `Ignition-Edge-linux-aarch-64-8.3.6.zip` (~1.85 GB) | Edge (portable ZIP) |
+| `v8.3.6` | Linux x86-64    | `Ignition-Edge-linux-x86-64-8.3.6.zip` (~1.85 GB) | Edge (portable ZIP) |
+| `v8.3.4` | Linux x86-64    | `ignition-cloud-8.3.4-linux-64-installer.run` (~1.95 GB) | Cloud / Standard (BitRock installer) |
 
-## Container image
+## Container images
 
-The Containerfile in this repo wraps the ARM64 ZIP into a
-`debian:bookworm-slim` image and publishes it to ghcr on every commit
-to `main`:
+Two container images are built + published from this repo:
 
+**`ghcr.io/embernet-ai/ignition-edge`** — built from `Containerfile`
+(ARM64 portable ZIP) on every commit to `main`. Tags:
 ```
 ghcr.io/embernet-ai/ignition-edge:8.3.6
 ghcr.io/embernet-ai/ignition-edge:latest
 ghcr.io/embernet-ai/ignition-edge:main
 ```
+
+**`ghcr.io/embernet-ai/ignition-cloud`** — built from
+`Containerfile.cloud` (x86-64 .run installer, unattended mode) on
+every commit to `main`. Tags:
+```
+ghcr.io/embernet-ai/ignition-cloud:8.3.4
+ghcr.io/embernet-ai/ignition-cloud:latest
+ghcr.io/embernet-ai/ignition-cloud:main
+```
+
+Cloud (Standard edition) is x86-64 only — there is no aarch64 .run
+published for v8.3.4. Both Edge and Cloud can run **co-resident on
+the same host** via Quadlet by remapping ports — see UT3 cp02's
+[deploy-ut3-cp02.sh](https://github.com/Fireball-Red-Team/deployment/blob/main/deploy-ut3-cp02.sh)
+where Edge keeps defaults (8088/8043/8060) and Cloud is remapped to
+8089/8044/8061.
 
 The image:
 - Includes Ignition's bundled JRE (no separate Java install needed).
