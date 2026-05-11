@@ -34,10 +34,12 @@ ARG IGNITION_VERSION
 
 WORKDIR /tmp
 # BitRock InstallBuilder unattended mode — extracts + installs without
-# prompting. Prefix forces install location so the runtime stage knows
-# where to COPY from. --unattendedmodeui none suppresses the splash.
-# Some IA installer flags also accepted: --installer-language en,
-# --gatewayHttpPort, --gatewayHttpsPort, --serviceName.
+# prompting. We run the installer with a debug trace so we can see where
+# it actually drops files (different IA versions ignore --prefix and use
+# their own default location like /usr/local/ignition or /opt/ignition).
+# After it finishes, we locate the install root (the directory containing
+# ignition.sh) and move it to the canonical /usr/local/bin/ignition path
+# the runtime stage expects. Fail loud if we can't find ignition.sh.
 RUN curl -fSL --retry 3 --retry-delay 5 \
       -o ignition-installer.run \
       "https://github.com/Embernet-ai/ignition-packages/releases/download/v${IGNITION_VERSION}/ignition-cloud-${IGNITION_VERSION}-linux-64-installer.run" \
@@ -46,12 +48,30 @@ RUN curl -fSL --retry 3 --retry-delay 5 \
       --mode unattended \
       --unattendedmodeui none \
       --prefix /usr/local/bin/ignition \
-      --installer-language en \
- && rm -f ignition-installer.run \
+      --debuglevel 4 \
+      --debugtrace /tmp/ignition-install.log 2>&1 | tail -40 || true \
+ && echo "=== installer log tail ===" \
+ && tail -60 /tmp/ignition-install.log 2>/dev/null || true \
+ && echo "=== searching for ignition.sh in the filesystem ===" \
+ && IGNITION_SH="$(find / -xdev -name 'ignition.sh' -type f 2>/dev/null | head -1)" \
+ && if [ -z "${IGNITION_SH}" ]; then \
+      echo "FATAL: ignition.sh not found anywhere after install — installer failed silently" >&2; \
+      ls -la /usr/local/bin/ /usr/local/ /opt/ 2>/dev/null || true; \
+      exit 1; \
+    fi \
+ && IGNITION_ROOT="$(dirname "${IGNITION_SH}")" \
+ && echo "Installer dropped Ignition at: ${IGNITION_ROOT}" \
+ && if [ "${IGNITION_ROOT}" != "/usr/local/bin/ignition" ]; then \
+      echo "Relocating ${IGNITION_ROOT} -> /usr/local/bin/ignition"; \
+      mkdir -p /usr/local/bin; \
+      mv "${IGNITION_ROOT}" /usr/local/bin/ignition; \
+    fi \
+ && rm -f ignition-installer.run /tmp/ignition-install.log \
  && chmod +x /usr/local/bin/ignition/ignition.sh \
              /usr/local/bin/ignition/gwcmd.sh \
              /usr/local/bin/ignition/ignition-secrets-tool.sh \
-             /usr/local/bin/ignition/ignition-gateway 2>/dev/null || true
+             /usr/local/bin/ignition/ignition-gateway 2>/dev/null || true \
+ && ls /usr/local/bin/ignition | head -20
 
 # ─── Stage 2: runtime image ──────────────────────────────────────────────────
 FROM --platform=linux/amd64 debian:bookworm-slim
