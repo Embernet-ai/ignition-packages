@@ -1,0 +1,127 @@
+name: Build Ignition Cloud Container
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'Containerfile.cloud'
+      - '.github/workflows/build-cloud.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'Containerfile.cloud'
+      - '.github/workflows/build-cloud.yml'
+  workflow_dispatch:
+    inputs:
+      ignition_version:
+        description: 'Ignition Cloud version (release tag without leading v)'
+        required: true
+        default: '8.3.4'
+
+# Cloud is x86-64 only (no aarch64 .run published) — single-arch build,
+# no QEMU. Concurrency=1 so two pushes can't stomp the runner disk
+# (.run installer + extracted tree pushes 4-5 GB).
+concurrency:
+  group: ignition-cloud-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    timeout-minutes: 45
+
+    env:
+      REGISTRY: ghcr.io
+      IMAGE_NAME: embernet-ai/ignition-cloud
+      IGNITION_VERSION: ${{ github.event.inputs.ignition_version || '8.3.4' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Cloud .run is ~1.95 GB; extracted tree adds ~3 GB. Reclaim runner
+      # disk before we start so the build doesn't run out partway through.
+      - name: Reclaim runner disk
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /opt/hostedtoolcache/CodeQL || true
+          df -h /
+
+      - name: Install Podman
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman jq
+
+      - name: Resolve image tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "image=localhost/embernet-ai/ignition-cloud:test" >> "$GITHUB_OUTPUT"
+            echo "push=false"                                      >> "$GITHUB_OUTPUT"
+          else
+            BRANCH="${{ github.ref_name }}"
+            echo "image=${REGISTRY}/${IMAGE_NAME}:${BRANCH}"       >> "$GITHUB_OUTPUT"
+            echo "push=true"                                       >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Login to ghcr.io
+        if: steps.tag.outputs.push == 'true'
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" \
+            | podman login "${REGISTRY}" -u "${{ github.actor }}" --password-stdin
+
+      - name: Build amd64 image (no QEMU — native runner)
+        run: |
+          podman build \
+            --platform linux/amd64 \
+            --build-arg IGNITION_VERSION="${IGNITION_VERSION}" \
+            -t "${{ steps.tag.outputs.image }}" \
+            -f Containerfile.cloud .
+
+      - name: Inspect image size
+        run: |
+          podman images "${{ steps.tag.outputs.image }}" --format 'table {{.Repository}}\t{{.Tag}}\t{{.Size}}'
+
+      - name: Smoke test (verify install layout + ignition.sh)
+        run: |
+          podman run --rm \
+            --entrypoint /bin/sh \
+            "${{ steps.tag.outputs.image }}" \
+            -c 'set -e; \
+                test -x /usr/local/bin/ignition/ignition.sh; \
+                test -x /usr/local/bin/ignition/ignition-gateway; \
+                test -f /usr/local/bin/ignition/data/gateway.xml_clean; \
+                test -d /usr/local/bin/ignition/user-lib/modules; \
+                ls /usr/local/bin/ignition/user-lib/modules | head -10; \
+                echo "ignition cloud layout OK"'
+
+      - name: Push image
+        if: steps.tag.outputs.push == 'true'
+        run: |
+          podman push "${{ steps.tag.outputs.image }}" \
+            "docker://${{ steps.tag.outputs.image }}"
+
+      - name: Tag and push :latest + version (main only)
+        if: steps.tag.outputs.push == 'true' && github.ref_name == 'main'
+        run: |
+          for ALIAS in latest "${IGNITION_VERSION}"; do
+            podman tag "${{ steps.tag.outputs.image }}" \
+              "${REGISTRY}/${IMAGE_NAME}:${ALIAS}"
+            podman push "${REGISTRY}/${IMAGE_NAME}:${ALIAS}" \
+              "docker://${REGISTRY}/${IMAGE_NAME}:${ALIAS}"
+          done
+
+      - name: Summary
+        run: |
+          if [ "${{ steps.tag.outputs.push }}" = "true" ]; then
+            echo "Pushed: ${{ steps.tag.outputs.image }}"
+            if [ "${{ github.ref_name }}" = "main" ]; then
+              echo "Pushed: ${REGISTRY}/${IMAGE_NAME}:latest"
+              echo "Pushed: ${REGISTRY}/${IMAGE_NAME}:${IGNITION_VERSION}"
+            fi
+          else
+            echo "Built and smoke-tested locally; no push (PR build)"
+          fi

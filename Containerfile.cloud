@@ -1,0 +1,106 @@
+# syntax=docker/dockerfile:1.7
+#
+# Embernet Ignition Cloud (Standard edition) ${IGNITION_VERSION} — containerized.
+#
+# Wraps Inductive Automation's Linux x86-64 BitRock InstallBuilder
+# installer (.run) into a debian:bookworm-slim base. Installer is
+# self-extracting and supports unattended mode; we use --mode
+# unattended + --prefix to land the install at a known path, then
+# copy the resulting tree into a slim runtime stage.
+#
+# Companion to Containerfile (Edge ARM64 + x86-64, ZIP-based). Cloud
+# is shipped as a .run installer ONLY (no portable zip on GitHub
+# release v8.3.4), and is x86-64 ONLY — there's no aarch64 .run for
+# Cloud. amd64 build only.
+#
+# Built with:
+#   podman build --platform linux/amd64 \
+#     --build-arg IGNITION_VERSION=8.3.4 \
+#     -t ghcr.io/embernet-ai/ignition-cloud:8.3.4 \
+#     -f Containerfile.cloud .
+
+ARG IGNITION_VERSION=8.3.4
+
+# ─── Stage 1: download + unattended-install the .run ─────────────────────────
+FROM --platform=linux/amd64 debian:bookworm-slim AS installer
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      curl ca-certificates \
+      libfontconfig1 fontconfig-config tzdata bash procps \
+ && rm -rf /var/lib/apt/lists/*
+
+ARG IGNITION_VERSION
+
+WORKDIR /tmp
+# BitRock InstallBuilder unattended mode — extracts + installs without
+# prompting. Prefix forces install location so the runtime stage knows
+# where to COPY from. --unattendedmodeui none suppresses the splash.
+# Some IA installer flags also accepted: --installer-language en,
+# --gatewayHttpPort, --gatewayHttpsPort, --serviceName.
+RUN curl -fSL --retry 3 --retry-delay 5 \
+      -o ignition-installer.run \
+      "https://github.com/Embernet-ai/ignition-packages/releases/download/v${IGNITION_VERSION}/ignition-cloud-${IGNITION_VERSION}-linux-64-installer.run" \
+ && chmod +x ignition-installer.run \
+ && ./ignition-installer.run \
+      --mode unattended \
+      --unattendedmodeui none \
+      --prefix /usr/local/bin/ignition \
+      --installer-language en \
+ && rm -f ignition-installer.run \
+ && chmod +x /usr/local/bin/ignition/ignition.sh \
+             /usr/local/bin/ignition/gwcmd.sh \
+             /usr/local/bin/ignition/ignition-secrets-tool.sh \
+             /usr/local/bin/ignition/ignition-gateway 2>/dev/null || true
+
+# ─── Stage 2: runtime image ──────────────────────────────────────────────────
+FROM --platform=linux/amd64 debian:bookworm-slim
+
+ARG IGNITION_VERSION
+
+LABEL org.opencontainers.image.title="Embernet Ignition Cloud ${IGNITION_VERSION} (x86-64)"
+LABEL org.opencontainers.image.description="Inductive Automation Ignition (Standard / Cloud edition) ${IGNITION_VERSION} packaged for x86-64 deployment via Quadlet on EmberNet control-plane appliances. Co-resident with Edge on UT3 cp02 (different ports)."
+LABEL org.opencontainers.image.vendor="Fireball Industries"
+LABEL org.opencontainers.image.source="https://github.com/Embernet-ai/ignition-packages"
+LABEL ignition.version="${IGNITION_VERSION}"
+LABEL ignition.edition="standard"
+
+# Same minimal runtime deps as Edge — bundled JRE handles Java itself.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      ca-certificates \
+      libfontconfig1 fontconfig-config \
+      tzdata bash procps tini \
+ && rm -rf /var/lib/apt/lists/*
+
+# Bring the unattended install tree from the installer stage.
+COPY --from=installer /usr/local/bin/ignition /usr/local/bin/ignition
+
+WORKDIR /usr/local/bin/ignition
+
+# Default Cloud port set — matches the UT3 cp02 Quadlet remap so a
+# zero-config pull-and-run works on a host where Edge already owns
+# 8088/8043/8060. Override via Quadlet Environment= if Cloud is the
+# only Ignition on the box.
+EXPOSE 8089/tcp 8044/tcp 8061/udp
+
+ENV ACCEPT_IGNITION_EULA=Y \
+    IGNITION_EDITION=standard \
+    GATEWAY_ADMIN_USERNAME=admin \
+    GATEWAY_ADMIN_PASSWORD=embernet \
+    GATEWAY_HTTP_PORT=8089 \
+    GATEWAY_HTTPS_PORT=8044 \
+    GATEWAY_GAN_PORT=8061 \
+    DISABLE_QUICKSTART=true \
+    LANG=C.UTF-8
+
+# Same start pattern as the Edge image — ignition.sh backgrounds the
+# gateway via the wrapper; tail -F keeps PID 1 alive for podman.
+ENTRYPOINT ["/usr/bin/tini", "--", "/bin/bash", "-c"]
+CMD ["set -e; \
+      cd /usr/local/bin/ignition; \
+      ./ignition.sh start; \
+      sleep 8; \
+      mkdir -p logs; \
+      touch logs/wrapper.log; \
+      exec tail -F logs/wrapper.log"]
