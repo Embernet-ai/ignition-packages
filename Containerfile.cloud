@@ -32,6 +32,12 @@ RUN apt-get update \
 
 ARG IGNITION_VERSION
 
+# IA's installer refuses to run as root without an explicit
+# user=<existing-unix-user> arg. cp01 creates the 'ignition' service
+# user first then passes user=ignition. Mirror that here.
+RUN useradd --system --create-home --home-dir /opt/embernet/ignition \
+      --shell /bin/false ignition
+
 WORKDIR /tmp
 # IA's Linux installer is a makeself self-extracting archive that wraps
 # IA's own install script. The makeself args go BEFORE `--`; everything
@@ -39,15 +45,13 @@ WORKDIR /tmp
 #
 # Working flag set lifted from deploy-ut3-cp01.sh (which has been
 # installing Cloud successfully on bare-metal Ubuntu for months):
-#   ./installer.run -- unattended=text location=/usr/local/bin/ignition
+#   ./installer.run -- unattended=text location=/usr/local/bin/ignition user=ignition
 #
-# The earlier attempt with BitRock's --mode unattended --prefix flags
-# was wrong — that's a different installer family. The IA installer
-# prints its accepted args under `--help`; the actual ones are:
+# Accepted embedded-installer args (from `--help`):
 #   unattended=(graphical|minimal|text|none)
 #   textMode=(true|false)
 #   location=<dir>
-#   user=<unix-user>
+#   user=<existing unix user>   ← REQUIRED when running as root
 RUN curl -fSL --retry 3 --retry-delay 5 \
       -o ignition-installer.run \
       "https://github.com/Embernet-ai/ignition-packages/releases/download/v${IGNITION_VERSION}/ignition-cloud-${IGNITION_VERSION}-linux-64-installer.run" \
@@ -55,6 +59,7 @@ RUN curl -fSL --retry 3 --retry-delay 5 \
  && ./ignition-installer.run -- \
       unattended=text \
       location=/usr/local/bin/ignition \
+      user=ignition \
       2>&1 | tail -60 || true \
  && echo "=== searching for ignition.sh in the filesystem ===" \
  && IGNITION_SH="$(find / -xdev -name 'ignition.sh' -type f 2>/dev/null | head -1)" \
