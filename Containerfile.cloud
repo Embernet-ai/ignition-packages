@@ -33,25 +33,29 @@ RUN apt-get update \
 ARG IGNITION_VERSION
 
 WORKDIR /tmp
-# BitRock InstallBuilder unattended mode — extracts + installs without
-# prompting. We run the installer with a debug trace so we can see where
-# it actually drops files (different IA versions ignore --prefix and use
-# their own default location like /usr/local/ignition or /opt/ignition).
-# After it finishes, we locate the install root (the directory containing
-# ignition.sh) and move it to the canonical /usr/local/bin/ignition path
-# the runtime stage expects. Fail loud if we can't find ignition.sh.
+# IA's Linux installer is a makeself self-extracting archive that wraps
+# IA's own install script. The makeself args go BEFORE `--`; everything
+# after `--` is passed to the embedded installer.
+#
+# Working flag set lifted from deploy-ut3-cp01.sh (which has been
+# installing Cloud successfully on bare-metal Ubuntu for months):
+#   ./installer.run -- unattended=text location=/usr/local/bin/ignition
+#
+# The earlier attempt with BitRock's --mode unattended --prefix flags
+# was wrong — that's a different installer family. The IA installer
+# prints its accepted args under `--help`; the actual ones are:
+#   unattended=(graphical|minimal|text|none)
+#   textMode=(true|false)
+#   location=<dir>
+#   user=<unix-user>
 RUN curl -fSL --retry 3 --retry-delay 5 \
       -o ignition-installer.run \
       "https://github.com/Embernet-ai/ignition-packages/releases/download/v${IGNITION_VERSION}/ignition-cloud-${IGNITION_VERSION}-linux-64-installer.run" \
  && chmod +x ignition-installer.run \
- && ./ignition-installer.run \
-      --mode unattended \
-      --unattendedmodeui none \
-      --prefix /usr/local/bin/ignition \
-      --debuglevel 4 \
-      --debugtrace /tmp/ignition-install.log 2>&1 | tail -40 || true \
- && echo "=== installer log tail ===" \
- && tail -60 /tmp/ignition-install.log 2>/dev/null || true \
+ && ./ignition-installer.run -- \
+      unattended=text \
+      location=/usr/local/bin/ignition \
+      2>&1 | tail -60 || true \
  && echo "=== searching for ignition.sh in the filesystem ===" \
  && IGNITION_SH="$(find / -xdev -name 'ignition.sh' -type f 2>/dev/null | head -1)" \
  && if [ -z "${IGNITION_SH}" ]; then \
@@ -66,7 +70,7 @@ RUN curl -fSL --retry 3 --retry-delay 5 \
       mkdir -p /usr/local/bin; \
       mv "${IGNITION_ROOT}" /usr/local/bin/ignition; \
     fi \
- && rm -f ignition-installer.run /tmp/ignition-install.log \
+ && rm -f ignition-installer.run \
  && chmod +x /usr/local/bin/ignition/ignition.sh \
              /usr/local/bin/ignition/gwcmd.sh \
              /usr/local/bin/ignition/ignition-secrets-tool.sh \
