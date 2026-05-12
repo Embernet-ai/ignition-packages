@@ -29,15 +29,24 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 ARG IGNITION_VERSION
+# Buildx auto-injects TARGETARCH = "arm64" or "amd64" based on --platform.
+# IA's release uses the suffix "aarch-64" for ARM64 and "x86-64" for AMD64.
+ARG TARGETARCH
 
 WORKDIR /tmp
-RUN curl -fSL --retry 3 --retry-delay 5 \
+RUN set -eux; \
+    case "${TARGETARCH}" in \
+      arm64) IA_ARCH=aarch-64 ;; \
+      amd64) IA_ARCH=x86-64 ;; \
+      *) echo "Unsupported TARGETARCH=${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    curl -fSL --retry 3 --retry-delay 5 \
       -o ig.zip \
-      "https://github.com/Embernet-ai/ignition-packages/releases/download/v${IGNITION_VERSION}/Ignition-Edge-linux-aarch-64-${IGNITION_VERSION}.zip" \
- && mkdir -p /opt/ignition \
- && unzip -q ig.zip -d /opt/ignition \
- && rm -f ig.zip \
- && chmod +x /opt/ignition/ignition.sh \
+      "https://github.com/Embernet-ai/ignition-packages/releases/download/v${IGNITION_VERSION}/Ignition-Edge-linux-${IA_ARCH}-${IGNITION_VERSION}.zip"; \
+    mkdir -p /opt/ignition; \
+    unzip -q ig.zip -d /opt/ignition; \
+    rm -f ig.zip; \
+    chmod +x /opt/ignition/ignition.sh \
              /opt/ignition/gwcmd.sh \
              /opt/ignition/ignition-secrets-tool.sh \
              /opt/ignition/ignition-gateway 2>/dev/null || true
@@ -46,9 +55,10 @@ RUN curl -fSL --retry 3 --retry-delay 5 \
 FROM debian:bookworm-slim
 
 ARG IGNITION_VERSION
+ARG TARGETARCH
 
-LABEL org.opencontainers.image.title="Embernet Ignition Edge ${IGNITION_VERSION} (ARM64)"
-LABEL org.opencontainers.image.description="Inductive Automation Ignition Edge ${IGNITION_VERSION} packaged for ARM64 deployment via Quadlet on EmberNet edge appliances. Modules pre-loaded; demo mode by default."
+LABEL org.opencontainers.image.title="Embernet Ignition Edge ${IGNITION_VERSION}"
+LABEL org.opencontainers.image.description="Inductive Automation Ignition Edge ${IGNITION_VERSION} packaged for multi-arch (linux/arm64 + linux/amd64) Quadlet deployment on EmberNet edge appliances and UT3 control-plane nodes. Modules pre-loaded; demo mode by default."
 LABEL org.opencontainers.image.vendor="Fireball Industries"
 LABEL org.opencontainers.image.source="https://github.com/Embernet-ai/ignition-packages"
 LABEL ignition.version="${IGNITION_VERSION}"

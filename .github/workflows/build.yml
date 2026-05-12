@@ -32,18 +32,30 @@ jobs:
       packages: write
     timeout-minutes: 60
 
+    strategy:
+      fail-fast: false
+      matrix:
+        # cp02 (UT3 control plane, x86-64) needs the amd64 image.
+        # EmberNet edge Pi nodes need the arm64 image. Build both —
+        # ghcr publishes per-arch tags (e.g. :8.3.6-arm64, :8.3.6-amd64)
+        # plus a multi-arch manifest under :8.3.6 / :latest combining them.
+        include:
+          - arch: arm64
+            platform: linux/arm64
+            qemu: true
+          - arch: amd64
+            platform: linux/amd64
+            qemu: false
+
     env:
       REGISTRY: ghcr.io
       IMAGE_NAME: embernet-ai/ignition-edge
-      # Override at workflow_dispatch time; otherwise tracks the default below.
       IGNITION_VERSION: ${{ github.event.inputs.ignition_version || '8.3.6' }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Free up runner disk before we start — the Ignition zip is 1.85 GB
-      # and the extracted tree pushes intermediate layers near the limit.
       - name: Reclaim runner disk
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
@@ -51,6 +63,7 @@ jobs:
           df -h /
 
       - name: Set up QEMU (arm64 emulation)
+        if: matrix.qemu
         uses: docker/setup-qemu-action@v3
         with:
           platforms: linux/arm64
@@ -60,16 +73,17 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y podman jq
 
-      - name: Resolve image tag
+      - name: Resolve per-arch image tag
         id: tag
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            echo "image=localhost/embernet-ai/ignition-edge:test" >> "$GITHUB_OUTPUT"
-            echo "push=false"                                     >> "$GITHUB_OUTPUT"
+            echo "image=localhost/embernet-ai/ignition-edge:test-${{ matrix.arch }}" >> "$GITHUB_OUTPUT"
+            echo "push=false"                                                         >> "$GITHUB_OUTPUT"
           else
             BRANCH="${{ github.ref_name }}"
-            echo "image=${REGISTRY}/${IMAGE_NAME}:${BRANCH}"      >> "$GITHUB_OUTPUT"
-            echo "push=true"                                      >> "$GITHUB_OUTPUT"
+            # Per-arch tag we push from this matrix leg
+            echo "image=${REGISTRY}/${IMAGE_NAME}:${BRANCH}-${{ matrix.arch }}"       >> "$GITHUB_OUTPUT"
+            echo "push=true"                                                          >> "$GITHUB_OUTPUT"
           fi
 
       - name: Login to ghcr.io
@@ -78,10 +92,10 @@ jobs:
           echo "${{ secrets.GITHUB_TOKEN }}" \
             | podman login "${REGISTRY}" -u "${{ github.actor }}" --password-stdin
 
-      - name: Build arm64 image (this takes ~15-25 min under QEMU)
+      - name: Build ${{ matrix.arch }} image
         run: |
           podman build \
-            --platform linux/arm64 \
+            --platform ${{ matrix.platform }} \
             --build-arg IGNITION_VERSION="${IGNITION_VERSION}" \
             -t "${{ steps.tag.outputs.image }}" \
             -f Containerfile .
@@ -90,9 +104,10 @@ jobs:
         run: |
           podman images "${{ steps.tag.outputs.image }}" --format 'table {{.Repository}}\t{{.Tag}}\t{{.Size}}'
 
-      - name: Smoke test (arm64 — verify install layout + ignition.sh)
+      - name: Smoke test (${{ matrix.arch }} — verify install layout)
         run: |
           podman run --rm \
+            --platform ${{ matrix.platform }} \
             --entrypoint /bin/sh \
             "${{ steps.tag.outputs.image }}" \
             -c 'set -e; \
@@ -101,34 +116,60 @@ jobs:
                 test -f /usr/local/bin/ignition/data/gateway.xml_clean; \
                 test -d /usr/local/bin/ignition/user-lib/modules; \
                 ls /usr/local/bin/ignition/user-lib/modules | head -10; \
-                echo "ignition layout OK"'
+                echo "ignition layout OK (${{ matrix.arch }})"'
 
-      - name: Push image
+      - name: Push per-arch image
         if: steps.tag.outputs.push == 'true'
         run: |
           podman push "${{ steps.tag.outputs.image }}" \
             "docker://${{ steps.tag.outputs.image }}"
 
-      # On main pushes, also publish :latest and the version tag so
-      # appliances pull a stable rolling reference and a pinned one.
-      - name: Tag and push :latest + version (main only)
-        if: steps.tag.outputs.push == 'true' && github.ref_name == 'main'
-        run: |
-          for ALIAS in latest "${IGNITION_VERSION}"; do
-            podman tag "${{ steps.tag.outputs.image }}" \
-              "${REGISTRY}/${IMAGE_NAME}:${ALIAS}"
-            podman push "${REGISTRY}/${IMAGE_NAME}:${ALIAS}" \
-              "docker://${REGISTRY}/${IMAGE_NAME}:${ALIAS}"
-          done
-
       - name: Summary
         run: |
           if [ "${{ steps.tag.outputs.push }}" = "true" ]; then
             echo "Pushed: ${{ steps.tag.outputs.image }}"
-            if [ "${{ github.ref_name }}" = "main" ]; then
-              echo "Pushed: ${REGISTRY}/${IMAGE_NAME}:latest"
-              echo "Pushed: ${REGISTRY}/${IMAGE_NAME}:${IGNITION_VERSION}"
-            fi
           else
             echo "Built and smoke-tested locally; no push (PR build)"
           fi
+
+  # After both per-arch builds succeed, combine them into a multi-arch
+  # manifest under :latest and the version tag so consumers can just
+  # pull ghcr.io/embernet-ai/ignition-edge:8.3.6 and podman picks the
+  # right arch automatically.
+  manifest:
+    needs: build
+    if: github.event_name != 'pull_request' && github.ref_name == 'main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    timeout-minutes: 10
+
+    env:
+      REGISTRY: ghcr.io
+      IMAGE_NAME: embernet-ai/ignition-edge
+      IGNITION_VERSION: ${{ github.event.inputs.ignition_version || '8.3.6' }}
+
+    steps:
+      - name: Install Podman + buildah
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman buildah
+
+      - name: Login to ghcr.io
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" \
+            | podman login "${REGISTRY}" -u "${{ github.actor }}" --password-stdin
+
+      - name: Build + push multi-arch manifests (:main, :latest, :version)
+        run: |
+          for ALIAS in main latest "${IGNITION_VERSION}"; do
+            MANIFEST="${REGISTRY}/${IMAGE_NAME}:${ALIAS}"
+            buildah manifest rm "${MANIFEST}" 2>/dev/null || true
+            buildah manifest create "${MANIFEST}" \
+              "docker://${REGISTRY}/${IMAGE_NAME}:main-arm64" \
+              "docker://${REGISTRY}/${IMAGE_NAME}:main-amd64"
+            buildah manifest push --all "${MANIFEST}" \
+              "docker://${MANIFEST}"
+            echo "Pushed multi-arch manifest: ${MANIFEST}"
+          done
