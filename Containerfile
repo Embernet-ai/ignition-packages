@@ -50,8 +50,13 @@ RUN set -eux; \
     # (Windows-style perms preserved by unzip). ignition.sh invokes
     # ignition-util.sh as a subprocess, not via `source`, so it MUST
     # be +x or the gateway aborts with "Found ... but could not execute".
-    # Set 755 on every .sh in the install root + the gateway wrapper binary.
-    chmod 755 /opt/ignition/*.sh /opt/ignition/ignition-gateway 2>/dev/null || true
+    # Recursively chmod every .sh in the install tree (some, like
+    # ignition-util.sh, have a later mtime than ignition.sh and were
+    # missed by a single-level glob on prior builds). Fail loudly if
+    # ignition-util.sh isn't present at the expected path.
+    find /opt/ignition -type f -name '*.sh' -exec chmod 755 {} +; \
+    chmod 755 /opt/ignition/ignition-gateway; \
+    test -x /opt/ignition/ignition-util.sh || { echo "FATAL: ignition-util.sh missing or not executable after chmod" >&2; ls -la /opt/ignition/ignition-util.sh 2>&1; exit 1; }
 
 # ─── Stage 2: runtime image ──────────────────────────────────────────────────
 FROM debian:bookworm-slim

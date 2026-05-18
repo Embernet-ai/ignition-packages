@@ -76,7 +76,9 @@ RUN curl -fSL --retry 3 --retry-delay 5 \
       mv "${IGNITION_ROOT}" /usr/local/bin/ignition; \
     fi \
  && rm -f ignition-installer.run \
- && chmod 755 /usr/local/bin/ignition/*.sh /usr/local/bin/ignition/ignition-gateway 2>/dev/null || true \
+ && find /usr/local/bin/ignition -type f -name '*.sh' -exec chmod 755 {} + \
+ && chmod 755 /usr/local/bin/ignition/ignition-gateway \
+ && { test -x /usr/local/bin/ignition/ignition-util.sh || { echo "FATAL: ignition-util.sh missing or not executable after chmod" >&2; ls -la /usr/local/bin/ignition/ignition-util.sh 2>&1; exit 1; }; } \
  && ls /usr/local/bin/ignition | head -20
 
 # ─── Stage 2: runtime image ──────────────────────────────────────────────────
