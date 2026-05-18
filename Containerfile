@@ -82,6 +82,15 @@ RUN apt-get update \
       tzdata bash procps tini \
  && rm -rf /var/lib/apt/lists/*
 
+# Create the 'ignition' service user. ignition.sh drops privileges to
+# this user at startup and aborts with "User ignition does not exist"
+# if it's missing (cp01 bare-metal install creates it via the .run
+# installer; the portable-zip Edge image gets no installer, so we
+# create it ourselves here).
+RUN groupadd --system --gid 999 ignition \
+ && useradd --system --uid 999 --gid 999 \
+      --home-dir /usr/local/bin/ignition --shell /bin/false ignition
+
 # Bring in the unpacked install tree from the unpacker stage.
 COPY --from=unpacker /opt/ignition /usr/local/bin/ignition
 
