@@ -101,6 +101,14 @@ RUN apt-get update \
       tzdata bash procps tini \
  && rm -rf /var/lib/apt/lists/*
 
+# Recreate the 'ignition' service user from the installer stage with the
+# same UID/GID (999) so the install tree's ownership stays consistent
+# across the COPY. ignition.sh drops privileges to this user at startup
+# and aborts with "User ignition does not exist" if it's missing.
+RUN groupadd --system --gid 999 ignition \
+ && useradd --system --uid 999 --gid 999 \
+      --home-dir /usr/local/bin/ignition --shell /bin/false ignition
+
 # Bring the unattended install tree from the installer stage.
 COPY --from=installer /usr/local/bin/ignition /usr/local/bin/ignition
 
