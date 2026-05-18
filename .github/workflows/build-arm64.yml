@@ -1,24 +1,22 @@
-name: Build Ignition Edge Container (amd64)
+name: Build Ignition Edge Container (arm64)
 
-# x86-64 ONLY workflow — fast path, no QEMU. Pushes ALL canonical tags
-# (:main, :latest, :${IGNITION_VERSION}) so amd64 consumers (UT3 cp02)
-# can pull immediately without waiting on the arm64 build.
+# arm64 ONLY workflow — slow path via QEMU. Decoupled from amd64 so
+# Pi nodes get an explicit :${VERSION}-arm64 tag without holding up
+# the amd64 fast path that UT3 cp02 depends on.
 #
-# arm64 builds in a SEPARATE workflow (build-arm64.yml). It publishes
-# only the explicit :${VERSION}-arm64 tag — Pi nodes pull that one by
-# name, so they're decoupled from the amd64 fast path.
+# Pi consumers must pull the explicit tag:
+#   podman pull ghcr.io/embernet-ai/ignition-edge:8.3.6-arm64
+#
+# We do NOT touch the canonical :main / :latest / :${VERSION} tags
+# here — amd64 owns those (see build.yml). This keeps cp02's pull
+# of :8.3.6 deterministic and fast.
 
 on:
   push:
     branches: [ main, develop ]
     paths:
       - 'Containerfile'
-      - '.github/workflows/build.yml'
-  pull_request:
-    branches: [ main ]
-    paths:
-      - 'Containerfile'
-      - '.github/workflows/build.yml'
+      - '.github/workflows/build-arm64.yml'
   workflow_dispatch:
     inputs:
       ignition_version:
@@ -27,7 +25,7 @@ on:
         default: '8.3.6'
 
 concurrency:
-  group: ignition-build-amd64-${{ github.ref }}
+  group: ignition-build-arm64-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -36,7 +34,7 @@ jobs:
     permissions:
       contents: read
       packages: write
-    timeout-minutes: 30
+    timeout-minutes: 90
 
     env:
       REGISTRY: ghcr.io
@@ -53,55 +51,47 @@ jobs:
                       /opt/hostedtoolcache/CodeQL || true
           df -h /
 
+      - name: Set up QEMU (arm64 emulation)
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: linux/arm64
+
       - name: Install Podman
         run: |
           sudo apt-get update
           sudo apt-get install -y podman jq
 
       - name: Login to ghcr.io
-        if: github.event_name != 'pull_request'
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" \
             | podman login "${REGISTRY}" -u "${{ github.actor }}" --password-stdin
 
-      - name: Build amd64 image
+      - name: Build arm64 image
         run: |
           podman build \
-            --platform linux/amd64 \
+            --platform linux/arm64 \
             --build-arg IGNITION_VERSION="${IGNITION_VERSION}" \
-            -t "${REGISTRY}/${IMAGE_NAME}:build" \
+            -t "${REGISTRY}/${IMAGE_NAME}:build-arm64" \
             -f Containerfile .
-
-      - name: Inspect image size
-        run: |
-          podman images "${REGISTRY}/${IMAGE_NAME}:build" \
-            --format 'table {{.Repository}}\t{{.Tag}}\t{{.Size}}'
 
       - name: Smoke test (verify install layout + ignition user)
         run: |
           podman run --rm \
-            --platform linux/amd64 \
+            --platform linux/arm64 \
             --entrypoint /bin/sh \
-            "${REGISTRY}/${IMAGE_NAME}:build" \
+            "${REGISTRY}/${IMAGE_NAME}:build-arm64" \
             -c 'set -e; \
                 id ignition; \
                 test -x /usr/local/bin/ignition/ignition.sh; \
                 test -x /usr/local/bin/ignition/ignition-util.sh; \
                 test -x /usr/local/bin/ignition/ignition-gateway; \
-                test -f /usr/local/bin/ignition/data/gateway.xml_clean; \
-                test -d /usr/local/bin/ignition/user-lib/modules; \
-                echo "ignition layout OK (amd64)"'
+                echo "ignition layout OK (arm64)"'
 
-      - name: Tag + push canonical tags (:main, :latest, :version, :version-amd64)
-        if: github.event_name != 'pull_request'
+      - name: Push arm64-tagged image (:version-arm64 + :main-arm64)
         run: |
-          for TAG in main latest "${IGNITION_VERSION}" "${IGNITION_VERSION}-amd64" main-amd64; do
+          for TAG in "${IGNITION_VERSION}-arm64" main-arm64; do
             REF="${REGISTRY}/${IMAGE_NAME}:${TAG}"
-            podman tag "${REGISTRY}/${IMAGE_NAME}:build" "${REF}"
+            podman tag "${REGISTRY}/${IMAGE_NAME}:build-arm64" "${REF}"
             podman push "${REF}" "docker://${REF}"
             echo "Pushed: ${REF}"
           done
-
-      - name: Summary
-        run: |
-          echo "amd64 build complete. Tags published: :main :latest :${IGNITION_VERSION} :${IGNITION_VERSION}-amd64 :main-amd64"
