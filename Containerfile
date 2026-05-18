@@ -46,10 +46,12 @@ RUN set -eux; \
     mkdir -p /opt/ignition; \
     unzip -q ig.zip -d /opt/ignition; \
     rm -f ig.zip; \
-    chmod +x /opt/ignition/ignition.sh \
-             /opt/ignition/gwcmd.sh \
-             /opt/ignition/ignition-secrets-tool.sh \
-             /opt/ignition/ignition-gateway 2>/dev/null || true
+    # IA's portable ZIP ships shell scripts without the executable bit
+    # (Windows-style perms preserved by unzip). ignition.sh invokes
+    # ignition-util.sh as a subprocess, not via `source`, so it MUST
+    # be +x or the gateway aborts with "Found ... but could not execute".
+    # Set 755 on every .sh in the install root + the gateway wrapper binary.
+    chmod 755 /opt/ignition/*.sh /opt/ignition/ignition-gateway 2>/dev/null || true
 
 # ─── Stage 2: runtime image ──────────────────────────────────────────────────
 FROM debian:bookworm-slim
