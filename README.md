@@ -11,9 +11,13 @@ Releases. Each release tag `vX.Y.Z` carries one or more assets.
 
 | Tag      | Platform        | Asset name | Edition |
 |----------|-----------------|------------|---------|
-| `v8.3.6` | Linux ARM64     | `Ignition-Edge-linux-aarch-64-8.3.6.zip` (~1.85 GB) | Edge (portable ZIP) |
-| `v8.3.6` | Linux x86-64    | `Ignition-Edge-linux-x86-64-8.3.6.zip` (~1.85 GB) | Edge (portable ZIP) |
-| `v8.3.4` | Linux x86-64    | `ignition-cloud-8.3.4-linux-64-installer.run` (~1.95 GB) | Cloud / Standard (BitRock installer) |
+| `v8.3.8` | Linux x86-64    | `ignition-8.3.8-linux-64-installer.run` (~2.0 GB) | Standard (BitRock installer) |
+| `v8.3.8` | Linux x86-64    | `ignition-cloud-8.3.8-linux-64-installer.run` (~1.88 GB) | Cloud (BitRock installer) |
+| `v8.3.8` | Linux x86-64    | `Ignition-Edge-linux-x86-64-8.3.8.zip` (~1.85 GB) | Edge (portable ZIP) |
+| `v8.3.8` | Linux ARM64     | `Ignition-linux-aarch-64-8.3.8.zip` (~1.90 GB) | Standard (portable ZIP) |
+| `v8.3.8` | Linux ARM64     | `Ignition-Edge-linux-aarch-64-8.3.8.zip` (~1.86 GB) | Edge (portable ZIP) |
+| `v8.3.8` | Linux ARM32     | `Ignition-linux-armhf-32-8.3.8.zip` (~1.90 GB) | Standard (portable ZIP) |
+| `v8.3.8` | Linux ARM32     | `Ignition-Edge-linux-armhf-32-8.3.8.zip` (~1.86 GB) | Edge (portable ZIP) |
 
 ## Container images
 
@@ -22,7 +26,7 @@ Two container images are built + published from this repo:
 **`ghcr.io/embernet-ai/ignition-edge`** — built from `Containerfile`
 (ARM64 portable ZIP) on every commit to `main`. Tags:
 ```
-ghcr.io/embernet-ai/ignition-edge:8.3.6
+ghcr.io/embernet-ai/ignition-edge:8.3.8
 ghcr.io/embernet-ai/ignition-edge:latest
 ghcr.io/embernet-ai/ignition-edge:main
 ```
@@ -31,7 +35,7 @@ ghcr.io/embernet-ai/ignition-edge:main
 `Containerfile.cloud` (x86-64 .run installer, unattended mode) on
 every commit to `main`. Tags:
 ```
-ghcr.io/embernet-ai/ignition-cloud:8.3.4
+ghcr.io/embernet-ai/ignition-cloud:8.3.8
 ghcr.io/embernet-ai/ignition-cloud:latest
 ghcr.io/embernet-ai/ignition-cloud:main
 ```

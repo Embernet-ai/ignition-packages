@@ -15,11 +15,11 @@
 #
 # Built with:
 #   podman build --platform linux/amd64 \
-#     --build-arg IGNITION_VERSION=8.3.4 \
-#     -t ghcr.io/embernet-ai/ignition-cloud:8.3.4 \
+#     --build-arg IGNITION_VERSION=8.3.8 \
+#     -t ghcr.io/embernet-ai/ignition-cloud:8.3.8 \
 #     -f Containerfile.cloud .
 
-ARG IGNITION_VERSION=8.3.4
+ARG IGNITION_VERSION=8.3.8
 
 # ─── Stage 1: download + unattended-install the .run ─────────────────────────
 FROM --platform=linux/amd64 debian:bookworm-slim AS installer
