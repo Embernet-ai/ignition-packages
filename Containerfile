@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 #
-# Embernet Ignition Edge 8.3.6 (Linux ARM64) — containerized.
+# Embernet Ignition Edge 8.3.8 (Linux ARM64) — containerized.
 #
 # Wraps Inductive Automation's portable ZIP install tree (the same files
 # you'd extract by running their official Linux ZIP installer) into a
@@ -18,7 +18,7 @@
 #     -t ghcr.io/embernet-ai/ignition-edge:8.3.6 \
 #     -f Containerfile .
 
-ARG IGNITION_VERSION=8.3.6
+ARG IGNITION_VERSION=8.3.8
 
 # ─── Stage 1: download + unpack the ZIP ──────────────────────────────────────
 FROM debian:bookworm-slim AS unpacker
