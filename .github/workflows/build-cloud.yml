@@ -16,7 +16,7 @@ on:
       ignition_version:
         description: 'Ignition Cloud version (release tag without leading v)'
         required: true
-        default: '8.3.4'
+        default: '8.3.8'
 
 # Cloud is x86-64 only (no aarch64 .run published) — single-arch build,
 # no QEMU. Concurrency=1 so two pushes can't stomp the runner disk
@@ -36,7 +36,7 @@ jobs:
     env:
       REGISTRY: ghcr.io
       IMAGE_NAME: embernet-ai/ignition-cloud
-      IGNITION_VERSION: ${{ github.event.inputs.ignition_version || '8.3.4' }}
+      IGNITION_VERSION: ${{ github.event.inputs.ignition_version || '8.3.8' }}
 
     steps:
       - name: Checkout repository

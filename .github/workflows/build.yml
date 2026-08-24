@@ -24,7 +24,7 @@ on:
       ignition_version:
         description: 'Ignition Edge version (zip release tag without leading v)'
         required: true
-        default: '8.3.6'
+        default: '8.3.8'
 
 concurrency:
   group: ignition-build-amd64-${{ github.ref }}
@@ -41,7 +41,7 @@ jobs:
     env:
       REGISTRY: ghcr.io
       IMAGE_NAME: embernet-ai/ignition-edge
-      IGNITION_VERSION: ${{ github.event.inputs.ignition_version || '8.3.6' }}
+      IGNITION_VERSION: ${{ github.event.inputs.ignition_version || '8.3.8' }}
 
     steps:
       - name: Checkout repository
