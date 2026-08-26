@@ -103,14 +103,35 @@ RUN apt-get update \
 
 # Recreate the 'ignition' service user from the installer stage with the
 # same UID/GID (999) so the install tree's ownership stays consistent
-# across the COPY. ignition.sh drops privileges to this user at startup
-# and aborts with "User ignition does not exist" if it's missing.
+# across the COPY. The tree is chowned to this user, so it must exist.
 RUN groupadd --system --gid 999 ignition \
  && useradd --system --uid 999 --gid 999 \
       --home-dir /usr/local/bin/ignition --shell /bin/false ignition
 
 # Bring the unattended install tree from the installer stage.
 COPY --from=installer /usr/local/bin/ignition /usr/local/bin/ignition
+
+# Neutralize RUN_AS_USER, or the container exits 1 instantly with no output.
+#
+# We pass `user=ignition` to the .run installer (IA refuses to install as root
+# without it), and the installer bakes `RUN_AS_USER=ignition` into ignition.sh.
+# At startup ignition.sh then re-execs itself via `runuser - ignition`, which
+# opens a LOGIN shell -- and this user's shell is /bin/false, so the re-exec
+# returns 1. `set -e` in CMD turns that into an immediate container death, and
+# because the failure happens before any log file is created, `podman logs` /
+# `kubectl logs` show absolutely nothing.
+#
+# The Edge image never hits this: it is built from IA's portable ZIP, whose
+# ignition.sh has no RUN_AS_USER. Commenting it out here puts Cloud on the same
+# footing rather than inventing a second startup contract. Run the gateway as a
+# non-root user via the runtime's securityContext / --user instead, which is the
+# orchestrator's job and does not depend on a login shell existing.
+#
+# This was previously patched at runtime by an entrypoint override in
+# deploy-ut3-cp02.sh, so podman hosts appeared to work while any plain
+# `podman run` or Kubernetes Deployment of this image did not.
+RUN sed -i 's/^RUN_AS_USER=/#RUN_AS_USER=/' /usr/local/bin/ignition/ignition.sh \
+ && ! grep -q '^RUN_AS_USER=' /usr/local/bin/ignition/ignition.sh
 
 WORKDIR /usr/local/bin/ignition
 
