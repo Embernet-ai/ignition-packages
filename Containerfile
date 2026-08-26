@@ -94,6 +94,21 @@ RUN groupadd --system --gid 999 ignition \
 # Bring in the unpacked install tree from the unpacker stage.
 COPY --from=unpacker /opt/ignition /usr/local/bin/ignition
 
+# Let container args reach the gateway as Wrapper property overrides.
+#
+# ignition.sh ignores trailing `wrapper.*=*` arguments unless PASS_THROUGH is
+# enabled -- it prints usage and exits 2 instead. The knob ships commented out
+# (`#PASS_THROUGH=app_args`). `both` is the value we want: properties first,
+# with an optional `--` separator before application arguments. The script's own
+# normalizer keeps `both` as-is:
+#     elif [ "X${PASS_THROUGH}" != "Xboth" ] ; then PASS_THROUGH=false
+# so this must be exactly `both`, not `true`, which collapses to app_args.
+#
+# Edge charts do not currently pass gateway args, so this is latent here -- but
+# the Cloud image hit exactly this and the two images should behave the same.
+RUN sed -i 's/^#PASS_THROUGH=.*/PASS_THROUGH=both/' /usr/local/bin/ignition/ignition.sh \
+ && grep -q '^PASS_THROUGH=both' /usr/local/bin/ignition/ignition.sh
+
 WORKDIR /usr/local/bin/ignition
 
 # Ports:
@@ -119,11 +134,13 @@ ENV ACCEPT_IGNITION_EULA=Y \
 # (via the wrapper) and exits. We need a foreground process to keep the
 # container alive — exec tail -F on the wrapper log. tini reaps zombies
 # from the wrapper so we don't accumulate defunct procs across restarts.
-ENTRYPOINT ["/usr/bin/tini", "--", "/bin/bash", "-c"]
-CMD ["set -e; \
-      cd /usr/local/bin/ignition; \
-      ./ignition.sh start; \
-      sleep 8; \
-      mkdir -p logs; \
-      touch logs/wrapper.log; \
-      exec tail -F logs/wrapper.log"]
+#
+# The startup script lives in the entrypoint, NOT in CMD. Container args replace
+# CMD, so an inline `bash -c "<script>"` CMD meant any `args:` from a chart threw
+# the whole startup away and ran the argument as a command instead. Keeping CMD
+# empty makes args arrive as "$@" and get forwarded to the gateway.
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod 0755 /usr/local/bin/entrypoint.sh
+
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/entrypoint.sh"]
+CMD []

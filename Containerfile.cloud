@@ -133,6 +133,18 @@ COPY --from=installer /usr/local/bin/ignition /usr/local/bin/ignition
 RUN sed -i 's/^RUN_AS_USER=/#RUN_AS_USER=/' /usr/local/bin/ignition/ignition.sh \
  && ! grep -q '^RUN_AS_USER=' /usr/local/bin/ignition/ignition.sh
 
+# Let container args reach the gateway as Wrapper property overrides.
+#
+# ignition.sh ignores trailing `wrapper.*=*` arguments unless PASS_THROUGH is
+# enabled -- it prints usage and exits 2 instead. The knob ships commented out
+# (`#PASS_THROUGH=app_args`). `both` is the value we want: properties first,
+# with an optional `--` separator before application arguments. The script's own
+# normalizer keeps `both` as-is:
+#     elif [ "X${PASS_THROUGH}" != "Xboth" ] ; then PASS_THROUGH=false
+# so this must be exactly `both`, not `true`, which collapses to app_args.
+RUN sed -i 's/^#PASS_THROUGH=.*/PASS_THROUGH=both/' /usr/local/bin/ignition/ignition.sh \
+ && grep -q '^PASS_THROUGH=both' /usr/local/bin/ignition/ignition.sh
+
 WORKDIR /usr/local/bin/ignition
 
 # Default Cloud port set — matches the UT3 cp02 Quadlet remap so a
@@ -153,11 +165,13 @@ ENV ACCEPT_IGNITION_EULA=Y \
 
 # Same start pattern as the Edge image — ignition.sh backgrounds the
 # gateway via the wrapper; tail -F keeps PID 1 alive for podman.
-ENTRYPOINT ["/usr/bin/tini", "--", "/bin/bash", "-c"]
-CMD ["set -e; \
-      cd /usr/local/bin/ignition; \
-      ./ignition.sh start; \
-      sleep 8; \
-      mkdir -p logs; \
-      touch logs/wrapper.log; \
-      exec tail -F logs/wrapper.log"]
+#
+# The startup script lives in the entrypoint, NOT in CMD. Container args replace
+# CMD, so an inline `bash -c "<script>"` CMD meant any `args:` from a chart threw
+# the whole startup away and ran the argument as a command instead. Keeping CMD
+# empty makes args arrive as "$@" and get forwarded to the gateway.
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod 0755 /usr/local/bin/entrypoint.sh
+
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/entrypoint.sh"]
+CMD []
