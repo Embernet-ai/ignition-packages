@@ -94,6 +94,29 @@ RUN groupadd --system --gid 999 ignition \
 # Bring in the unpacked install tree from the unpacker stage.
 COPY --from=unpacker /opt/ignition /usr/local/bin/ignition
 
+# ─── Fireball modules, baked in ──────────────────────────────────────────────
+#
+# The gateway loads modules from user-lib/modules at startup. That directory
+# lives in the image layer, not on a volume, so a .modl dropped into a running
+# container disappears on the next restart. The chart mounts a /modules PVC and
+# values.yaml advertises gateway.modules.autoInstall, but nothing in the chart
+# copies /modules into user-lib/modules, so that path installs nothing.
+#
+# So our modules ship in the image. Every edge gateway then has the viewer the
+# moment it boots, with no per-gateway install step and nothing to re-do after a
+# pod roll. Verified 2026-09-02: none of the three UT3 edge gateways had the
+# viewer installed, because there was no mechanism that could have put it there.
+#
+# The cost is coupling: the UT3 Schematic Viewer versions independently of
+# Ignition (1.22.0 against gateway 8.3.8), so a viewer release now needs an
+# image rebuild and a pod roll. That is the deliberate trade.
+#
+# Built from fireball-industries/UT3-Code via scripts/dev-env/build-modules.sh
+# edge. The module is unsigned; the chart already runs the gateway with unsigned
+# modules permitted.
+COPY modules/*.modl /usr/local/bin/ignition/user-lib/modules/
+RUN chmod 0644 /usr/local/bin/ignition/user-lib/modules/*.modl  && ls -la /usr/local/bin/ignition/user-lib/modules/UT3-Schematic-Viewer.modl
+
 # Let container args reach the gateway as Wrapper property overrides.
 #
 # ignition.sh ignores trailing `wrapper.*=*` arguments unless PASS_THROUGH is

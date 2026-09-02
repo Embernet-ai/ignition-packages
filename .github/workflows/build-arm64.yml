@@ -16,6 +16,7 @@ on:
     branches: [ main, develop ]
     paths:
       - 'Containerfile'
+      - 'modules/**'
       - '.github/workflows/build-arm64.yml'
   workflow_dispatch:
     inputs:

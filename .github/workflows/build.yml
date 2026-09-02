@@ -13,11 +13,13 @@ on:
     branches: [ main, develop ]
     paths:
       - 'Containerfile'
+      - 'modules/**'
       - '.github/workflows/build.yml'
   pull_request:
     branches: [ main ]
     paths:
       - 'Containerfile'
+      - 'modules/**'
       - '.github/workflows/build.yml'
   workflow_dispatch:
     inputs:
