@@ -94,28 +94,43 @@ RUN groupadd --system --gid 999 ignition \
 # Bring in the unpacked install tree from the unpacker stage.
 COPY --from=unpacker /opt/ignition /usr/local/bin/ignition
 
-# ─── Fireball modules, baked in ──────────────────────────────────────────────
+# ─── No Fireball modules in the edge image ───────────────────────────────────
 #
-# The gateway loads modules from user-lib/modules at startup. That directory
-# lives in the image layer, not on a volume, so a .modl dropped into a running
-# container disappears on the next restart. The chart mounts a /modules PVC and
-# values.yaml advertises gateway.modules.autoInstall, but nothing in the chart
-# copies /modules into user-lib/modules, so that path installs nothing.
+# This image deliberately ships NO UT3 module. An earlier revision baked
+# UT3-Schematic-Viewer.modl into user-lib/modules so every edge gateway would
+# have the viewer on boot. That was removed on 2026-09-02, after taking seven
+# gateways through it, because on Edge the module cannot work and costs us real
+# time on every one:
 #
-# So our modules ship in the image. Every edge gateway then has the viewer the
-# moment it boots, with no per-gateway install step and nothing to re-do after a
-# pod roll. Verified 2026-09-02: none of the three UT3 edge gateways had the
-# viewer installed, because there was no mechanism that could have put it there.
+#   1. Ignition Edge refuses to run non-whitelisted third party modules. Since
+#      8.3.3 it faults them outright:
+#        Module 'com.fireballindustries.ut3-schematic-viewer' has invalid
+#        license; marking FAULTED
+#      <freeModule>true</freeModule> does not override it. That element IS set
+#      in edge/module/module.xml, IA's own gradle plugin emits exactly that
+#      element, and Edge ignores it regardless. Vendor policy, not a build bug.
 #
-# The cost is coupling: the UT3 Schematic Viewer versions independently of
-# Ignition (1.22.0 against gateway 8.3.8), so a viewer release now needs an
-# image rebuild and a pod roll. That is the deliberate trade.
+#   2. Ignition 8.3 added module certificate acceptance to Gateway
+#      Commissioning. A .modl the gateway has not seen yet puts it into
+#        Resources needing commissioning: modules
+#      so it serves the commissioning webapp instead of starting until somebody
+#      drives the "Activate Pending Modules" wizard in a browser. That is a
+#      manual step per gateway AND per image rebuild, for a module that then
+#      faults anyway. On two gateways the wizard was not even reachable:
+#      kubectl port-forward kept aborting the 1.2 MB commissioner.js it needs.
 #
-# Built from fireball-industries/UT3-Code via scripts/dev-env/build-modules.sh
-# edge. The module is unsigned; the chart already runs the gateway with unsigned
-# modules permitted.
-COPY modules/*.modl /usr/local/bin/ignition/user-lib/modules/
-RUN chmod 0644 /usr/local/bin/ignition/user-lib/modules/*.modl  && ls -la /usr/local/bin/ignition/user-lib/modules/UT3-Schematic-Viewer.modl
+# Deleting the module from those two containers made both gateways commission
+# themselves and start in 31 seconds with no intervention at all.
+#
+# The viewer ships instead as a WebDev mounted-folder resource inside the Edge
+# project (com.inductiveautomation.webdev/resources/viewer-app, served from
+# /system/webdev/Edge/viewer-app/index.html). WebDev is on Edge's allowed list,
+# it travels with the project rather than the image, and it needs no extra
+# Ignition licensing. Verified serving on all seven UT3 edge gateways.
+#
+# Containerfile.cloud is unaffected. The cloud gateway is Standard edition,
+# which runs unlicensed third party modules on the trial, so the Master Sequence
+# Editor module loads there normally.
 
 # Let container args reach the gateway as Wrapper property overrides.
 #
