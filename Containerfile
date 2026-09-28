@@ -157,7 +157,10 @@ EXPOSE 8088/tcp 8043/tcp 8060/udp
 
 # Demo mode: no license auto-applied. Operator activates via web UI on
 # first boot. EULA pre-accepted via env so the gateway boots unattended.
-# Admin user/password applied on first boot via gwcmd.sh during init below.
+# Admin user/password: nothing in this image applies them. Ignition 8.3's
+# own commissioning reads GATEWAY_ADMIN_USERNAME / GATEWAY_ADMIN_PASSWORD on
+# first boot (gateway-8.3.8.jar, commissioning CredentialsResource) and
+# creates that admin instead of asking in the wizard.
 ENV ACCEPT_IGNITION_EULA=Y \
     IGNITION_EDITION=edge \
     GATEWAY_ADMIN_USERNAME=admin \
