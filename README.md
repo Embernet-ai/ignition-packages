@@ -31,6 +31,16 @@ ghcr.io/embernet-ai/ignition-edge:latest
 ghcr.io/embernet-ai/ignition-edge:main
 ```
 
+Those three are a manifest list for linux/amd64 and linux/arm64, so the
+same tag works on an x86 edge VM and on a Pi. `build.yml` pushes the amd64
+image and `build-arm64.yml` pushes `:8.3.8-arm64`, and after either one
+finishes `edge-manifest.yml` joins the two per-arch images into the list.
+The per-arch tags (`:8.3.8-amd64`, `:8.3.8-arm64`, `:main-amd64`,
+`:main-arm64`) still point at single images if you want to pin an arch.
+Until September 2026 the canonical tags were amd64 only and a Pi pulling
+`:latest` died with exec format error. Never delete an old digest from the
+package: UT3 cp02 pins this image by digest.
+
 **`ghcr.io/embernet-ai/ignition-cloud`** — built from
 `Containerfile.cloud` (x86-64 .run installer, unattended mode) on
 every commit to `main`. Tags:

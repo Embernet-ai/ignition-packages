@@ -1,0 +1,103 @@
+name: Publish Ignition Edge multi-arch tags
+
+# :8.3.8, :latest and :main used to be amd64 only. build.yml pushes them from
+# the amd64 fast path and build-arm64.yml only ever pushes :8.3.8-arm64, so a
+# Pi that pulled the canonical tag got an x86 image and died with exec format
+# error. The Ignition Edge chart even told people one tag served both.
+#
+# This runs after either build finishes and points the canonical tags at a
+# manifest list of the two per-arch images that are already published. Nothing
+# gets rebuilt, and the per-arch tags (:8.3.8-amd64, :8.3.8-arm64, :main-amd64,
+# :main-arm64) keep pointing at single-arch images exactly like before.
+#
+# Old digests are never deleted. UT3 cp02 pins ignition-edge by digest, so an
+# old digest disappearing would break a production gateway on its next pull.
+#
+# Order doesn't matter. If amd64 finishes last, build.yml overwrites :8.3.8
+# with its single image for a minute, then this runs again off that completion
+# and puts the list back. The concurrency group keeps two of these from racing.
+
+on:
+  workflow_run:
+    workflows:
+      - "Build Ignition Edge Container (amd64)"
+      - "Build Ignition Edge Container (arm64)"
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      ignition_version:
+        description: 'Ignition Edge version whose -amd64 and -arm64 tags get joined'
+        required: true
+        default: '8.3.8'
+
+concurrency:
+  group: ignition-edge-manifest
+  cancel-in-progress: false
+
+jobs:
+  manifest:
+    # PR builds push nothing, and a failed build has nothing new to join.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event != 'pull_request')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    timeout-minutes: 15
+
+    env:
+      IMAGE: ghcr.io/embernet-ai/ignition-edge
+      IGNITION_VERSION: ${{ github.event.inputs.ignition_version || '8.3.8' }}
+
+    steps:
+      - name: Login to ghcr.io
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" \
+            | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      # Resolve each per-arch tag to its digest and prove it really is that
+      # arch. A list built on a mislabeled image is worse than no list.
+      - name: Resolve per-arch digests
+        id: arch
+        run: |
+          set -euo pipefail
+          for ARCH in amd64 arm64; do
+            REF="${IMAGE}:${IGNITION_VERSION}-${ARCH}"
+            DIGEST=$(docker buildx imagetools inspect "$REF" --format '{{json .Manifest}}' | jq -r .digest)
+            GOT=$(docker buildx imagetools inspect "$REF" --format '{{json .Image}}' | jq -r .architecture)
+            if [ "$GOT" != "$ARCH" ]; then
+              echo "::error::$REF is $GOT, not $ARCH"
+              exit 1
+            fi
+            echo "$REF -> $DIGEST ($GOT)"
+            echo "${ARCH}=${DIGEST}" >> "$GITHUB_OUTPUT"
+          done
+
+      - name: Point the canonical tags at a two-arch list
+        run: |
+          set -euo pipefail
+          docker buildx imagetools create \
+            -t "${IMAGE}:${IGNITION_VERSION}" \
+            -t "${IMAGE}:latest" \
+            -t "${IMAGE}:main" \
+            "${IMAGE}@${{ steps.arch.outputs.amd64 }}" \
+            "${IMAGE}@${{ steps.arch.outputs.arm64 }}"
+
+      - name: Verify every canonical tag resolves per platform
+        run: |
+          set -euo pipefail
+          for TAG in "${IGNITION_VERSION}" latest main; do
+            RAW=$(docker buildx imagetools inspect --raw "${IMAGE}:${TAG}")
+            for ARCH in amd64 arm64; do
+              WANT="${{ steps.arch.outputs.amd64 }}"
+              [ "$ARCH" = arm64 ] && WANT="${{ steps.arch.outputs.arm64 }}"
+              GOT=$(echo "$RAW" | jq -r --arg a "$ARCH" '.manifests[] | select(.platform.os=="linux" and .platform.architecture==$a) | .digest')
+              if [ "$GOT" != "$WANT" ]; then
+                echo "::error::${IMAGE}:${TAG} linux/${ARCH} is '${GOT}', expected ${WANT}"
+                exit 1
+              fi
+              echo "${IMAGE}:${TAG} linux/${ARCH} -> ${GOT}"
+            done
+          done
