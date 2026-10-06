@@ -1,0 +1,147 @@
+# syntax=docker/dockerfile:1.7
+#
+# EmberNet Ignition (Standard, the full edition) - containerized for
+# linux/amd64 and linux/arm64 from the installers this repo hosts.
+#
+# Inductive Automation ships the full edition differently per arch, and our
+# v8.3.8 release carries exactly what they ship:
+#
+#   amd64  ignition-8.3.8-linux-64-installer.run   (BitRock .run installer)
+#   arm64  Ignition-linux-aarch-64-8.3.8.zip        (portable ZIP)
+#
+# There is no x86-64 Standard ZIP and no aarch64 Standard .run, so one
+# Containerfile branches on TARGETARCH in the unpacker stage and both arches
+# land the same tree at /usr/local/bin/ignition. Everything after that stage
+# is identical, which is the point: one image name, one manifest list, one
+# chart, and the node pulls its own arch.
+#
+# Built natively per arch by .github/workflows/build-standard.yml (amd64 on
+# ubuntu-latest, arm64 on the arm64 runner, no QEMU), then joined into one
+# manifest list:
+#   podman build --platform linux/arm64 \
+#     --build-arg IGNITION_VERSION=8.3.8 \
+#     -t ghcr.io/embernet-ai/ignition:8.3.8-arm64 \
+#     -f Containerfile.standard .
+
+ARG IGNITION_VERSION=8.3.8
+
+# --- Stage 1: get the install tree out of whatever IA ships for this arch ---
+FROM debian:bookworm-slim AS unpacker
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      curl unzip ca-certificates \
+      libfontconfig1 fontconfig-config tzdata bash procps \
+ && rm -rf /var/lib/apt/lists/*
+
+ARG IGNITION_VERSION
+ARG TARGETARCH
+
+# The .run installer refuses to run as root without user=<existing user>, the
+# same thing Containerfile.cloud has to do. Harmless on the ZIP path.
+RUN useradd --system --create-home --home-dir /opt/embernet/ignition \
+      --shell /bin/false ignition
+
+WORKDIR /tmp
+RUN set -eux; \
+    BASE="https://github.com/Embernet-ai/ignition-packages/releases/download/v${IGNITION_VERSION}"; \
+    case "${TARGETARCH}" in \
+      arm64) \
+        curl -fSL --retry 3 --retry-delay 5 -o ig.zip \
+          "${BASE}/Ignition-linux-aarch-64-${IGNITION_VERSION}.zip"; \
+        mkdir -p /usr/local/bin/ignition; \
+        unzip -q ig.zip -d /usr/local/bin/ignition; \
+        rm -f ig.zip ;; \
+      amd64) \
+        curl -fSL --retry 3 --retry-delay 5 -o ig.run \
+          "${BASE}/ignition-${IGNITION_VERSION}-linux-64-installer.run"; \
+        chmod +x ig.run; \
+        ./ig.run -- unattended=text location=/usr/local/bin/ignition user=ignition 2>&1 | tail -40 || true; \
+        rm -f ig.run; \
+        # The installer has dropped the tree somewhere else before. Find it
+        # rather than trust the location= argument.
+        IGNITION_SH="$(find / -xdev -name ignition.sh -type f -not -path '/proc/*' 2>/dev/null | head -1)"; \
+        test -n "${IGNITION_SH}" || { echo "FATAL: the .run installer left no ignition.sh anywhere" >&2; exit 1; }; \
+        ROOT="$(dirname "${IGNITION_SH}")"; \
+        if [ "${ROOT}" != /usr/local/bin/ignition ]; then mv "${ROOT}" /usr/local/bin/ignition; fi ;; \
+      *) echo "Unsupported TARGETARCH=${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    # IA's ZIP keeps Windows-style permissions, so its scripts arrive without
+    # the executable bit and ignition.sh aborts calling ignition-util.sh.
+    find /usr/local/bin/ignition -type f -name '*.sh' -exec chmod 755 {} +; \
+    chmod 755 /usr/local/bin/ignition/ignition-gateway; \
+    test -x /usr/local/bin/ignition/ignition-util.sh; \
+    test -f /usr/local/bin/ignition/data/gateway.xml_clean; \
+    test -d /usr/local/bin/ignition/user-lib/modules
+
+# --- Stage 2: runtime ---------------------------------------------------------
+FROM debian:bookworm-slim
+
+ARG IGNITION_VERSION
+ARG TARGETARCH
+
+LABEL org.opencontainers.image.title="EmberNet Ignition ${IGNITION_VERSION}"
+LABEL org.opencontainers.image.description="Inductive Automation Ignition ${IGNITION_VERSION}, the full (Standard) edition, built from the installers hosted in Embernet-ai/ignition-packages for linux/amd64 and linux/arm64. Every bundled module, demo mode until licensed."
+LABEL org.opencontainers.image.vendor="Fireball Industries"
+LABEL org.opencontainers.image.source="https://github.com/Embernet-ai/ignition-packages"
+LABEL ignition.version="${IGNITION_VERSION}"
+LABEL ignition.edition="standard"
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      ca-certificates \
+      libfontconfig1 fontconfig-config \
+      tzdata bash procps tini curl \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN groupadd --system --gid 999 ignition \
+ && useradd --system --uid 999 --gid 999 \
+      --home-dir /usr/local/bin/ignition --shell /bin/false ignition
+
+# Owned by ignition, not root, so the gateway can run as uid 999 with no
+# privileges at all. The Edge and Cloud images leave the tree to root and their
+# charts run the gateway as root; this one doesn't have to. Logs, temp, the
+# wrapper's pid file and the seeded data tree all live under this directory.
+COPY --from=unpacker --chown=999:999 /usr/local/bin/ignition /usr/local/bin/ignition
+
+# The .run installer bakes RUN_AS_USER=ignition into ignition.sh, which makes it
+# re-exec through a login shell for a user whose shell is /bin/false: exit 1
+# before a single log line exists. Containerfile.cloud explains the whole hunt.
+# The ZIP has no such line, so on arm64 this changes nothing. Who the gateway
+# runs as is the runtime's call (securityContext, --user), not a login shell's.
+RUN sed -i 's/^RUN_AS_USER=/#RUN_AS_USER=/' /usr/local/bin/ignition/ignition.sh \
+ && ! grep -q '^RUN_AS_USER=' /usr/local/bin/ignition/ignition.sh
+
+# Let container args reach the gateway as wrapper property overrides. The knob
+# ships commented out and must be exactly `both`; anything else collapses to
+# app_args and ignition.sh prints usage and exits 2. Same as the other images.
+RUN sed -i 's/^#PASS_THROUGH=.*/PASS_THROUGH=both/' /usr/local/bin/ignition/ignition.sh \
+ && grep -q '^PASS_THROUGH=both' /usr/local/bin/ignition/ignition.sh
+
+WORKDIR /usr/local/bin/ignition
+
+# 8088 web UI and Designer, 8043 HTTPS once a certificate is installed, 8060
+# Gateway Network. The full edition keeps IA's defaults; it is not co-resident
+# with anything the way the Cloud image is on UT3 cp02.
+EXPOSE 8088/tcp 8043/tcp 8060/tcp
+
+# EULA accepted so the gateway commissions unattended. Ignition 8.3 reads the
+# admin pair itself on first commissioning (CredentialsResource in the gateway
+# jar), so nothing here applies it. Charts override all of these.
+ENV ACCEPT_IGNITION_EULA=Y \
+    IGNITION_EDITION=standard \
+    GATEWAY_ADMIN_USERNAME=admin \
+    GATEWAY_ADMIN_PASSWORD=embernet \
+    GATEWAY_HTTP_PORT=8088 \
+    GATEWAY_HTTPS_PORT=8043 \
+    GATEWAY_GAN_PORT=8060 \
+    DISABLE_QUICKSTART=true \
+    LANG=C.UTF-8
+
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod 0755 /usr/local/bin/entrypoint.sh
+
+USER 999:999
+
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/entrypoint.sh"]
+CMD []

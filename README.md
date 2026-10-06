@@ -57,6 +57,25 @@ the same host** via Quadlet by remapping ports — see UT3 cp02's
 where Edge keeps defaults (8088/8043/8060) and Cloud is remapped to
 8089/8044/8061.
 
+**`ghcr.io/embernet-ai/ignition`** is the full edition (Standard), built
+from `Containerfile.standard` for linux/amd64 and linux/arm64. Tags:
+```
+ghcr.io/embernet-ai/ignition:8.3.8
+ghcr.io/embernet-ai/ignition:latest
+ghcr.io/embernet-ai/ignition:main
+```
+
+Those three are a manifest list. IA ships the full edition as a `.run`
+installer on x86-64 and as a portable ZIP on aarch64, and the v8.3.8 release
+here carries both, so the amd64 image comes from
+`ignition-8.3.8-linux-64-installer.run` and the arm64 image from
+`Ignition-linux-aarch-64-8.3.8.zip`. `build-standard.yml` builds each one on a
+native runner (no QEMU), boots the gateway and waits for RUNNING on 8.3.8
+before it pushes `:8.3.8-amd64` and `:8.3.8-arm64`, then joins them. Unlike
+Edge and Cloud, this image runs as `ignition` (uid 999) by default and its
+install tree belongs to that user, so the EmberNet Ignition chart runs it with
+no root at all. Default ports are IA's own: 8088, 8043, 8060.
+
 The image:
 - Includes Ignition's bundled JRE (no separate Java install needed).
 - Pre-loads every standard module: Vision, Perspective, OPC UA, the
