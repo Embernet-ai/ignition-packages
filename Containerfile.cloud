@@ -81,6 +81,48 @@ RUN curl -fSL --retry 3 --retry-delay 5 \
  && { test -x /usr/local/bin/ignition/ignition-util.sh || { echo "FATAL: ignition-util.sh missing or not executable after chmod" >&2; ls -la /usr/local/bin/ignition/ignition-util.sh 2>&1; exit 1; }; } \
  && ls /usr/local/bin/ignition | head -20
 
+# ─── Stage 1b: the full edition's own modules, from IA's Standard installer ──
+#
+# IA's Cloud installer is a smaller product: it leaves out Vision, the device
+# drivers (Modbus, DNP3, DNP3 v2, BACnet, Siemens, Logix, Micro800, Mitsubishi,
+# Omron, Allen-Bradley, IEC 61850, UDP and TCP) and Voice and SMS notification.
+# The stock inductiveautomation/ignition image this gateway used to run carried
+# all of them, so moving to the Cloud-only image in 2026-11 took them away
+# (a gateway whose modules.json still named them logged "file for module ... is
+# missing and will not be loaded" for 16 modules on every boot).
+#
+# So this image is the Cloud tree plus every module file IA's own Standard 8.3.8
+# installer ships that the Cloud installer does not, and the Vision client
+# launchers that go with Vision. Nothing here is built by hand: both installers
+# are IA's, hosted in the v${IGNITION_VERSION} release of this repo.
+FROM --platform=linux/amd64 debian:bookworm-slim AS standard-modules
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      curl ca-certificates \
+      libfontconfig1 fontconfig-config tzdata bash procps \
+ && rm -rf /var/lib/apt/lists/*
+
+ARG IGNITION_VERSION
+
+RUN useradd --system --create-home --home-dir /opt/embernet/ignition \
+      --shell /bin/false ignition
+
+WORKDIR /tmp
+RUN curl -fSL --retry 3 --retry-delay 5 \
+      -o ignition-standard.run \
+      "https://github.com/Embernet-ai/ignition-packages/releases/download/v${IGNITION_VERSION}/ignition-${IGNITION_VERSION}-linux-64-installer.run" \
+ && chmod +x ignition-standard.run \
+ && ./ignition-standard.run -- \
+      unattended=text \
+      location=/usr/local/bin/ignition-standard \
+      user=ignition \
+      2>&1 | tail -20 || true \
+ && rm -f ignition-standard.run \
+ && test -d /usr/local/bin/ignition-standard/user-lib/modules \
+ && test "$(ls /usr/local/bin/ignition-standard/user-lib/modules | wc -l)" -ge 29 \
+ && ls /usr/local/bin/ignition-standard/lib/core/launch/ | grep -q visionclientlauncher
+
 # ─── Stage 2: runtime image ──────────────────────────────────────────────────
 FROM --platform=linux/amd64 debian:bookworm-slim
 
@@ -110,6 +152,38 @@ RUN groupadd --system --gid 999 ignition \
 
 # Bring the unattended install tree from the installer stage.
 COPY --from=installer /usr/local/bin/ignition /usr/local/bin/ignition
+
+# Every module IA's Standard installer ships that the Cloud installer does not,
+# and the Vision client launchers. Only files that are missing are added: the Cloud
+# tree's own copies (and the modules only Cloud has) are never replaced. Then it
+# asserts the result holds every Standard module, so a changed installer layout
+# fails the build instead of shipping a gateway short of modules again.
+COPY --from=standard-modules /usr/local/bin/ignition-standard/user-lib/modules /tmp/standard-modules
+COPY --from=standard-modules /usr/local/bin/ignition-standard/lib/core/launch /tmp/standard-launch
+RUN set -eu; \
+    added=0; \
+    for f in /tmp/standard-modules/*; do \
+      b=$(basename "$f"); \
+      if [ ! -e "/usr/local/bin/ignition/user-lib/modules/$b" ]; then \
+        cp -p "$f" "/usr/local/bin/ignition/user-lib/modules/$b"; \
+        chown 999:999 "/usr/local/bin/ignition/user-lib/modules/$b"; \
+        added=$((added + 1)); \
+      fi; \
+    done; \
+    for f in /tmp/standard-launch/visionclientlauncher.*; do \
+      b=$(basename "$f"); \
+      if [ ! -e "/usr/local/bin/ignition/lib/core/launch/$b" ]; then \
+        cp -p "$f" "/usr/local/bin/ignition/lib/core/launch/$b"; \
+        chown 999:999 "/usr/local/bin/ignition/lib/core/launch/$b"; \
+      fi; \
+    done; \
+    for f in /tmp/standard-modules/*; do \
+      test -e "/usr/local/bin/ignition/user-lib/modules/$(basename "$f")" \
+        || { echo "FATAL: standard module $(basename "$f") is not in the image" >&2; exit 1; }; \
+    done; \
+    echo "added $added module files from the Standard installer"; \
+    test "$added" -ge 15; \
+    rm -rf /tmp/standard-modules /tmp/standard-launch
 
 # Neutralize RUN_AS_USER, or the container exits 1 instantly with no output.
 #

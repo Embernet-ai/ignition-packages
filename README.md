@@ -50,6 +50,13 @@ ghcr.io/embernet-ai/ignition-cloud:latest
 ghcr.io/embernet-ai/ignition-cloud:main
 ```
 
+The Cloud image carries every module IA ships in 8.3.8: the Cloud installer's
+own, plus the Standard installer's that the Cloud one leaves out (Vision, the
+device drivers, Voice and SMS), taken from IA's Standard `.run` in the same
+release. `build-cloud.yml` boots the image and fails if `modules.json` names a
+module with no file, if the log says a module file is missing, or if Vision and
+a driver did not start.
+
 Cloud (Standard edition) is x86-64 only — there is no aarch64 .run
 published for v8.3.4. Both Edge and Cloud can run **co-resident on
 the same host** via Quadlet by remapping ports — see UT3 cp02's
