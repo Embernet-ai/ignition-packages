@@ -128,7 +128,7 @@ jobs:
             if grep -q "is missing and will not be loaded" logs/wrapper.log; then
               grep "is missing and will not be loaded" logs/wrapper.log; bad=1
             fi
-            for id in com.inductiveautomation.vision com.inductiveautomation.opcua.drivers.modbus; do
+            for id in com.inductiveautomation.vision com.inductiveautomation.opcua.drivers.modbus com.inductiveautomation.opcua.drivers.siemens-symbolic; do
               grep -q "Starting up module .$id" logs/wrapper.log || { echo "module $id never started"; bad=1; }
             done
             exit $bad'
