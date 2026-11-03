@@ -98,6 +98,42 @@ jobs:
                 ls /usr/local/bin/ignition/user-lib/modules | head -10; \
                 echo "ignition cloud layout OK"'
 
+      # A layout check alone passes a gateway that is short of modules. This boots
+      # the image and fails the build if modules.json names any module whose file is
+      # not on disk, if the gateway logs "is missing and will not be loaded" for
+      # any module, if it is not the Cloud edition, or if Vision and a device driver
+      # were not started. That is what 8.3.8 shipped without for a week in
+      # 2026-11: sixteen modules named in modules.json with no file behind them.
+      - name: Boot the gateway and check every module has a file
+        run: |
+          IMG="${{ steps.tag.outputs.image }}"
+          podman run -d --name ig -e IGNITION_EDITION=cloud -e GATEWAY_ADMIN_PASSWORD=ci-boot-check \
+            -p 8089:8089 "${IMG}"
+          S=""
+          for _ in $(seq 1 90); do
+            S=$(curl -fsS --max-time 5 http://127.0.0.1:8089/StatusPing 2>/dev/null || true)
+            case "$S" in *RUNNING*) break ;; esac
+            sleep 5
+          done
+          case "$S" in *RUNNING*) ;; *) echo "::error::gateway never reached RUNNING"; podman logs ig | tail -120; exit 1 ;; esac
+          INFO=$(curl -fsS http://127.0.0.1:8089/system/gwinfo)
+          echo "$INFO"
+          case "$INFO" in *"Version=${IGNITION_VERSION}"*"PlatformEdition=cloud"*) ;; *) echo "::error::not Ignition ${IGNITION_VERSION} cloud edition"; exit 1 ;; esac
+          podman exec ig sh -c 'cd /usr/local/bin/ignition
+            grep "\"filename\"" data/modules.json | sed "s/.*: \"\(.*\)\".*/\1/" > /tmp/files
+            n=$(wc -l < /tmp/files); bad=0
+            while IFS= read -r f; do [ -f "$f" ] || { echo "MISSING FILE: $f"; bad=1; }; done < /tmp/files
+            echo "modules.json names $n modules"
+            [ "$n" -ge 29 ] || { echo "too few modules: $n"; bad=1; }
+            if grep -q "is missing and will not be loaded" logs/wrapper.log; then
+              grep "is missing and will not be loaded" logs/wrapper.log; bad=1
+            fi
+            for id in com.inductiveautomation.vision com.inductiveautomation.opcua.drivers.modbus com.inductiveautomation.opcua.drivers.siemens-symbolic; do
+              grep -q "Starting up module .$id" logs/wrapper.log || { echo "module $id never started"; bad=1; }
+            done
+            exit $bad'
+          podman rm -f ig >/dev/null
+
       - name: Push image
         if: steps.tag.outputs.push == 'true'
         run: |
