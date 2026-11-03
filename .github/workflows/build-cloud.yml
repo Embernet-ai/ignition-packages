@@ -107,7 +107,7 @@ jobs:
       - name: Boot the gateway and check every module has a file
         run: |
           IMG="${{ steps.tag.outputs.image }}"
-          podman run -d --name ig -e GATEWAY_ADMIN_PASSWORD=ci-boot-check \
+          podman run -d --name ig -e IGNITION_EDITION=cloud -e GATEWAY_ADMIN_PASSWORD=ci-boot-check \
             -p 8089:8089 "${IMG}"
           S=""
           for _ in $(seq 1 90); do
