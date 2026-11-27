@@ -4,6 +4,8 @@ Inductive Automation Ignition runtimes — Edge (ARM64 + x86-64) and
 Cloud/Standard (x86-64) — packaged for Podman Quadlet deployment on
 EmberNet edge appliances and UT3 control-plane nodes.
 
+Part of [EmberNet](https://embernet.ai), the complete industrial edge platform.
+
 ## Releases
 
 This repository hosts the upstream Ignition install artifacts as GitHub
