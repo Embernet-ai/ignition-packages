@@ -1,8 +1,9 @@
 # Embernet Ignition Packages
 
-Inductive Automation Ignition runtimes — Edge (ARM64 + x86-64) and
-Cloud/Standard (x86-64) — packaged for Podman Quadlet deployment on
-EmberNet edge appliances and UT3 control-plane nodes.
+Ignition on your EmberNet edge appliance, ready to run. The Inductive Automation
+Ignition runtimes, Edge (ARM64 and x86-64) and Cloud/Standard (x86-64), come
+packaged for Podman Quadlet deployment on EmberNet edge appliances and UT3
+control-plane nodes.
 
 Part of [EmberNet](https://embernet.ai), the complete industrial edge platform.
 
@@ -25,7 +26,7 @@ Releases. Each release tag `vX.Y.Z` carries one or more assets.
 
 Two container images are built + published from this repo:
 
-**`ghcr.io/embernet-ai/ignition-edge`** — built from `Containerfile`
+**`ghcr.io/embernet-ai/ignition-edge`**, built from `Containerfile`
 (ARM64 portable ZIP) on every commit to `main`. Tags:
 ```
 ghcr.io/embernet-ai/ignition-edge:8.3.8
@@ -43,7 +44,7 @@ Until September 2026 the canonical tags were amd64 only and a Pi pulling
 `:latest` died with exec format error. Never delete an old digest from the
 package: UT3 cp02 pins this image by digest.
 
-**`ghcr.io/embernet-ai/ignition-cloud`** — built from
+**`ghcr.io/embernet-ai/ignition-cloud`**, built from
 `Containerfile.cloud` (x86-64 .run installer, unattended mode) on
 every commit to `main`. Tags:
 ```
@@ -59,9 +60,9 @@ release. `build-cloud.yml` boots the image and fails if `modules.json` names a
 module with no file, if the log says a module file is missing, or if Vision and
 a driver did not start.
 
-Cloud (Standard edition) is x86-64 only — there is no aarch64 .run
+Cloud (Standard edition) is x86-64 only. There is no aarch64 .run
 published for v8.3.4. Both Edge and Cloud can run **co-resident on
-the same host** via Quadlet by remapping ports — see UT3 cp02's
+the same host** via Quadlet by remapping ports. See UT3 cp02's
 [deploy-ut3-cp02.sh](https://github.com/Fireball-Red-Team/deployment/blob/main/deploy-ut3-cp02.sh)
 where Edge keeps defaults (8088/8043/8060) and Cloud is remapped to
 8089/8044/8061.
@@ -103,7 +104,7 @@ Inductive Automation publishes both a Linux installer (`.deb`/`.rpm`)
 and a portable ZIP. Installing the `.deb` on openSUSE MicroOS (RPM,
 read-only btrfs root, transactional-update model) is non-viable. The
 ZIP is the supported "drop in a directory and run `./ignition.sh`"
-distribution — perfect for a container layer. The actual runtime is
+distribution, which is perfect for a container layer. The actual runtime is
 identical to a host install; the JRE, libs, and modules are all
 bundled in the ZIP.
 
@@ -113,7 +114,7 @@ This pattern matches our other ARM64 runtime images:
 
 ## Use it on a Pi
 
-Don't run this manually — the deploy at
+Don't run this manually. The deploy at
 [Fireball-Red-Team/deploy-eci-ember-node](https://github.com/Fireball-Red-Team/deploy-eci-ember-node)
 pulls and starts this image as part of the embernode-arm-NNNN
 node-deploy. See its `.agent/workflows/deploy-embernet-node.md` for
